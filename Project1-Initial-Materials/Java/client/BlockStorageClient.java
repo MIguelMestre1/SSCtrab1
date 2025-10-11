@@ -1,24 +1,38 @@
 
 import java.io.*;
 import java.net.*;
+import java.security.MessageDigest;
 import java.util.*;
+
+import javax.crypto.SecretKey;
 
 public class BlockStorageClient {
     private static final int PORT = 5000;
     private static final int BLOCK_SIZE = 4096;
     private static final String INDEX_FILE = "client_index.ser";
+    private static final String KEY_FILE = "clientkey.bin";
 
     private static Map<String, List<String>> fileIndex = new HashMap<>();
 
-    public static void main(String[] args) throws IOException, ClassNotFoundException {
+    public static void main(String[] args) throws IOException, ClassNotFoundException, Exception {
         loadIndex();
+
+        SecretKey key;
+        File keyFile = new File(KEY_FILE);
+        if (keyFile.exists()) {
+            key = CryptoStuff.loadKey(KEY_FILE);
+            System.out.println("Existing AES key loaded.");
+        } else {
+            key = CryptoStuff.generateKey();
+            CryptoStuff.saveKey(key, KEY_FILE);
+            System.out.println("New AES key generated and saved to " + KEY_FILE);
+        }
 
         Socket socket = new Socket("localhost", PORT);
         try (
-            DataInputStream in = new DataInputStream(socket.getInputStream());
-            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-            Scanner scanner = new Scanner(System.in);
-        ) {
+                DataInputStream in = new DataInputStream(socket.getInputStream());
+                DataOutputStream out = new DataOutputStream(socket.getOutputStream());
+                Scanner scanner = new Scanner(System.in);) {
             while (true) {
                 System.out.print("Command (PUT/GET/LIST/SEARCH/EXIT): ");
                 String cmd = scanner.nextLine().toUpperCase();
@@ -36,21 +50,23 @@ public class BlockStorageClient {
                         String kwLine = scanner.nextLine();
                         List<String> keywords = new ArrayList<>();
                         if (!kwLine.trim().isEmpty()) {
-                            for (String kw : kwLine.split(",")) keywords.add(kw.trim().toLowerCase());
+                            for (String kw : kwLine.split(","))
+                                keywords.add(kw.trim().toLowerCase());
                         }
-                        putFile(file, keywords, out, in);
+                        putFile(file, keywords, out, in, key);
                         saveIndex();
                         break;
 
                     case "GET":
                         System.out.print("Enter filename to retrieve: ");
                         String filename = scanner.nextLine();
-                        getFile(filename, out, in);
+                        getFile(filename, out, in, key);
                         break;
 
                     case "LIST":
                         System.out.println("Stored files:");
-                        for (String f : fileIndex.keySet()) System.out.println(" - " + f);
+                        for (String f : fileIndex.keySet())
+                            System.out.println(" - " + f);
                         break;
 
                     case "SEARCH":
@@ -75,29 +91,33 @@ public class BlockStorageClient {
         }
     }
 
-    private static void putFile(File file, List<String> keywords, DataOutputStream out, DataInputStream in) throws IOException {
+    private static void putFile(File file, List<String> keywords,
+            DataOutputStream out, DataInputStream in, SecretKey key) throws Exception {
         List<String> blocks = new ArrayList<>();
         try (FileInputStream fis = new FileInputStream(file)) {
             byte[] buffer = new byte[BLOCK_SIZE];
             int bytesRead;
             int blockNum = 0;
             while ((bytesRead = fis.read(buffer)) != -1) {
-                byte[] blockData = Arrays.copyOf(buffer, bytesRead);
-                String blockId = file.getName() + "_block_" + blockNum++;
+                byte[] plainBlock = Arrays.copyOf(buffer, bytesRead);
+                byte[] encryptedBlock = CryptoStuff.encrypt(plainBlock, key);
+
+                // Block ID (opaco)
+                String blockId = Base64.getUrlEncoder().encodeToString(
+                        MessageDigest.getInstance("SHA-256").digest(encryptedBlock));
 
                 out.writeUTF("STORE_BLOCK");
                 out.writeUTF(blockId);
-                out.writeInt(blockData.length);
-                out.write(blockData);
-		System.out.print("."); // Just for debug
+                out.writeInt(encryptedBlock.length);
+                out.write(encryptedBlock);
 
-                // Send keywords for first block only
-                if (blockNum == 1) {
+                // Keywords apenas no primeiro bloco
+                if (blockNum == 0) {
                     out.writeInt(keywords.size());
-                    for (String kw : keywords) out.writeUTF(kw);
-		System.out.println("/nSent keywords./n"); // Just for debug    
+                    for (String kw : keywords)
+                        out.writeUTF(kw);
                 } else {
-                    out.writeInt(0); // no keywords for other blocks
+                    out.writeInt(0);
                 }
 
                 out.flush();
@@ -107,17 +127,18 @@ public class BlockStorageClient {
                     return;
                 }
                 blocks.add(blockId);
+                blockNum++;
+                System.out.print("."); // progress indicator
             }
         }
         fileIndex.put(file.getName(), blocks);
-	System.out.println();
-	System.out.println("File stored with " + blocks.size() + " blocks.");
+        System.out.println("\n File stored securely with " + blocks.size() + " encrypted blocks.");
     }
 
-    private static void getFile(String filename, DataOutputStream out, DataInputStream in) throws IOException {
+    private static void getFile(String filename,
+            DataOutputStream out, DataInputStream in, SecretKey key) throws Exception {
         List<String> blocks = fileIndex.get(filename);
         if (blocks == null) {
-	    System.out.println();	    
             System.out.println("File not found in local index.");
             return;
         }
@@ -131,13 +152,16 @@ public class BlockStorageClient {
                     System.out.println("Block not found: " + blockId);
                     return;
                 }
-                byte[] data = new byte[length];
-                in.readFully(data);
-		System.out.print("."); // Just for debug 
-                fos.write(data);
+                byte[] encrypted = new byte[length];
+                in.readFully(encrypted);
+
+                // Decifrar e verificar integridade (GCM)
+                byte[] decrypted = CryptoStuff.decrypt(encrypted, key);
+                fos.write(decrypted);
+                System.out.print(".");
             }
         }
-	System.out.println();	
+        System.out.println();
         System.out.println("File reconstructed: retrieved_" + filename);
     }
 
@@ -146,7 +170,7 @@ public class BlockStorageClient {
         out.writeUTF(keyword.toLowerCase());
         out.flush();
         int count = in.readInt();
-        System.out.println();	
+        System.out.println();
         System.out.println("Search results:");
         for (int i = 0; i < count; i++) {
             System.out.println(" - " + in.readUTF());
@@ -163,7 +187,8 @@ public class BlockStorageClient {
 
     private static void loadIndex() {
         File f = new File(INDEX_FILE);
-        if (!f.exists()) return;
+        if (!f.exists())
+            return;
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(f))) {
             fileIndex = (Map<String, List<String>>) ois.readObject();
         } catch (IOException | ClassNotFoundException e) {
