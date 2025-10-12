@@ -1,7 +1,13 @@
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
+import javax.crypto.Mac;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.security.SecureRandom;
 import java.util.Base64;
 
@@ -59,5 +65,28 @@ public class CryptoStuff {
         byte[] data = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path));
         byte[] decoded = Base64.getDecoder().decode(new String(data));
         return new javax.crypto.spec.SecretKeySpec(decoded, "AES");
+    }
+
+    public static SecretKey loadOrGenerateKeywordKey(String path) throws Exception {
+        File f = new File(path);
+        if (f.exists()) {
+            byte[] encoded = Files.readAllBytes(f.toPath());
+            byte[] raw = Base64.getDecoder().decode(new String(encoded).trim());
+            return new SecretKeySpec(raw, "HmacSHA256");
+        } else {
+            byte[] key = new byte[32]; // 256 bits
+            new SecureRandom().nextBytes(key);
+            SecretKey secret = new SecretKeySpec(key, "HmacSHA256");
+            Files.write(f.toPath(), Base64.getEncoder().encode(secret.getEncoded()));
+            return secret;
+        }
+    }
+
+    // Gera o token determinístico para uma keyword
+    public static String generateKeywordToken(SecretKey keywordKey, String keyword) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(keywordKey);
+        byte[] tag = mac.doFinal(keyword.trim().toLowerCase().getBytes(StandardCharsets.UTF_8));
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(tag);
     }
 }

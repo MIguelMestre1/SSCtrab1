@@ -8,6 +8,7 @@ public class cltest {
     private static final int PORT = 5000;
     private static final String INDEX_FILE = "client_index.ser";
     private static final String KEY_FILE = "clientkey.bin";
+    private static final String META_KEY_FILE = "metaKey.bin";
     private static final int BLOCK_SIZE = 4096;
 
     private static Map<String, List<String>> fileIndex = new HashMap<>();
@@ -35,6 +36,8 @@ public class cltest {
             CryptoStuff.saveKey(key, KEY_FILE);
         }
 
+        SecretKey metaKey = CryptoStuff.loadOrGenerateKeywordKey(META_KEY_FILE);
+
         Socket socket = new Socket("localhost", PORT);
         DataInputStream in = new DataInputStream(socket.getInputStream());
         DataOutputStream out = new DataOutputStream(socket.getOutputStream());
@@ -49,7 +52,7 @@ public class cltest {
                 }
                 File file = new File(args[1]);
                 List<String> keywords = Arrays.asList(args[2].split(","));
-                putFile(file, keywords, out, in, key);
+                putFile(file, keywords, out, in, key, metaKey);
                 saveIndex();
                 break;
 
@@ -62,7 +65,7 @@ public class cltest {
                     System.out.println("Usage: cltest SEARCH <keywords>");
                     return;
                 }
-                searchFiles(args[1], out, in);
+                searchFiles(args[1], out, in, metaKey);
                 break;
 
             case "GET":
@@ -86,7 +89,7 @@ public class cltest {
 
     // ==== PUT ====
     private static void putFile(File file, List<String> keywords, DataOutputStream out,
-            DataInputStream in, SecretKey key) throws Exception {
+            DataInputStream in, SecretKey key, SecretKey metaKey) throws Exception {
         List<String> blocks = new ArrayList<>();
         try (FileInputStream fis = new FileInputStream(file)) {
             byte[] buffer = new byte[BLOCK_SIZE];
@@ -105,8 +108,10 @@ public class cltest {
 
                 if (blockNum == 0) {
                     out.writeInt(keywords.size());
-                    for (String kw : keywords)
-                        out.writeUTF(kw.trim().toLowerCase());
+                    for (String kw : keywords) {
+                        String token = CryptoStuff.generateKeywordToken(metaKey, kw);
+                        out.writeUTF(token);
+                    }
                 } else {
                     out.writeInt(0);
                 }
@@ -195,21 +200,26 @@ public class cltest {
 
             try {
                 CryptoStuff.decrypt(encrypted, key);
-                System.out.println("✔ Block OK: " + blockId);
+                System.out.println("Block OK: " + blockId);
             } catch (javax.crypto.AEADBadTagException e) {
-                System.out.println("✖ Integrity FAILED for block: " + blockId);
+                System.out.println("Integrity FAILED for block: " + blockId);
                 allOk = false;
             }
         }
 
-        System.out.println(allOk ? "\n✅ All blocks verified successfully." : "\n❌ Integrity check failed.");
+        System.out.println(allOk ? "\n All blocks verified successfully." : "\n Integrity check failed.");
     }
 
     // ==== SEARCH ====
-    private static void searchFiles(String keyword, DataOutputStream out, DataInputStream in) throws IOException {
+    private static void searchFiles(String keyword, DataOutputStream out, DataInputStream in, SecretKey metaKey)
+            throws IOException, Exception {
+
+        String token = CryptoStuff.generateKeywordToken(metaKey, keyword);
+
         out.writeUTF("SEARCH");
-        out.writeUTF(keyword.toLowerCase());
+        out.writeUTF(token);
         out.flush();
+
         int count = in.readInt();
         System.out.println("\nSearch results:");
         for (int i = 0; i < count; i++)

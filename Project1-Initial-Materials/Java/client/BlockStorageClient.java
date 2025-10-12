@@ -11,6 +11,7 @@ public class BlockStorageClient {
     private static final int BLOCK_SIZE = 4096;
     private static final String INDEX_FILE = "client_index.ser";
     private static final String KEY_FILE = "clientkey.bin";
+    private static final String META_KEY_FILE = "metaKey.bin";
 
     private static Map<String, List<String>> fileIndex = new HashMap<>();
 
@@ -27,6 +28,9 @@ public class BlockStorageClient {
             CryptoStuff.saveKey(key, KEY_FILE);
             System.out.println("New AES key generated and saved to " + KEY_FILE);
         }
+
+        SecretKey metaKey = CryptoStuff.loadOrGenerateKeywordKey(META_KEY_FILE);
+        System.out.println("Keyword key ready (metaKey.bin).");
 
         Socket socket = new Socket("localhost", PORT);
         try (
@@ -53,7 +57,8 @@ public class BlockStorageClient {
                             for (String kw : kwLine.split(","))
                                 keywords.add(kw.trim().toLowerCase());
                         }
-                        putFile(file, keywords, out, in, key);
+
+                        putFile(file, keywords, out, in, key, metaKey);
                         saveIndex();
                         break;
 
@@ -64,15 +69,24 @@ public class BlockStorageClient {
                         break;
 
                     case "LIST":
-                        System.out.println("Stored files:");
-                        for (String f : fileIndex.keySet())
-                            System.out.println(" - " + f);
+                        if (fileIndex.isEmpty()) {
+                            System.out.println("\n[INFO] No files stored in local index.");
+                            break;
+                        }
+
+                        System.out.println("\n[INFO] Files stored in local index:");
+                        for (Map.Entry<String, List<String>> entry : fileIndex.entrySet()) {
+                            System.out.println(" -> " + entry.getKey() + " (" + entry.getValue().size() + " blocks):");
+                            for (String blockId : entry.getValue()) {
+                                System.out.println("     -" + blockId);
+                            }
+                        }
                         break;
 
                     case "SEARCH":
                         System.out.print("Enter keyword to search: ");
                         String keyword = scanner.nextLine();
-                        searchFiles(keyword, out, in);
+                        searchFiles(keyword, out, in, metaKey);
                         break;
 
                     case "EXIT":
@@ -92,7 +106,7 @@ public class BlockStorageClient {
     }
 
     private static void putFile(File file, List<String> keywords,
-            DataOutputStream out, DataInputStream in, SecretKey key) throws Exception {
+            DataOutputStream out, DataInputStream in, SecretKey key, SecretKey metaKey) throws Exception {
         List<String> blocks = new ArrayList<>();
         try (FileInputStream fis = new FileInputStream(file)) {
             byte[] buffer = new byte[BLOCK_SIZE];
@@ -114,8 +128,10 @@ public class BlockStorageClient {
                 // Keywords apenas no primeiro bloco
                 if (blockNum == 0) {
                     out.writeInt(keywords.size());
-                    for (String kw : keywords)
-                        out.writeUTF(kw);
+                    for (String kw : keywords) {
+                        String token = CryptoStuff.generateKeywordToken(metaKey, kw);
+                        out.writeUTF(token);
+                    }
                 } else {
                     out.writeInt(0);
                 }
@@ -128,7 +144,7 @@ public class BlockStorageClient {
                 }
                 blocks.add(blockId);
                 blockNum++;
-                System.out.print("."); // progress indicator
+                System.out.print("."); // for debug
             }
         }
         fileIndex.put(file.getName(), blocks);
@@ -165,16 +181,35 @@ public class BlockStorageClient {
         System.out.println("File reconstructed: retrieved_" + filename);
     }
 
-    private static void searchFiles(String keyword, DataOutputStream out, DataInputStream in) throws IOException {
+    private static void searchFiles(String keyword, DataOutputStream out,
+            DataInputStream in, SecretKey metaKey) throws Exception {
+
+        // gera token determinístico para a keyword
+        String token = CryptoStuff.generateKeywordToken(metaKey, keyword);
+
         out.writeUTF("SEARCH");
-        out.writeUTF(keyword.toLowerCase());
+        out.writeUTF(token);
         out.flush();
+
         int count = in.readInt();
         System.out.println();
         System.out.println("Search results:");
         for (int i = 0; i < count; i++) {
-            System.out.println(" - " + in.readUTF());
+            String blockId = in.readUTF();
+            String fileName = findFileByBlock(blockId);
+            if (fileName != null)
+                System.out.println(" - " + fileName + " (block: " + blockId + ")");
+            else
+                System.out.println(" - block: " + blockId);
         }
+    }
+
+    private static String findFileByBlock(String blockId) {
+        for (Map.Entry<String, List<String>> entry : fileIndex.entrySet()) {
+            if (entry.getValue().contains(blockId))
+                return entry.getKey();
+        }
+        return null;
     }
 
     private static void saveIndex() {

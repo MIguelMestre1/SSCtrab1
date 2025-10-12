@@ -16,7 +16,8 @@ public class BlockStorageServer {
 
     public static void main(String[] args) throws IOException {
         File dir = new File(BLOCK_DIR);
-        if (!dir.exists()) dir.mkdir();
+        if (!dir.exists())
+            dir.mkdir();
         loadMetadata();
 
         ServerSocket serverSocket = new ServerSocket(PORT);
@@ -30,9 +31,8 @@ public class BlockStorageServer {
 
     private static void handleClient(Socket socket) {
         try (
-            DataInputStream in = new DataInputStream(socket.getInputStream());
-            DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-        ) {
+                DataInputStream in = new DataInputStream(socket.getInputStream());
+                DataOutputStream out = new DataOutputStream(socket.getOutputStream());) {
             String command;
             while ((command = in.readUTF()) != null) {
                 switch (command) {
@@ -73,12 +73,12 @@ public class BlockStorageServer {
             fos.write(data);
         }
 
-        // Read optional metadata (keywords)
+        // Read keywords
         int keywordCount = in.readInt();
         if (keywordCount > 0) {
             List<String> keywords = new ArrayList<>();
             for (int i = 0; i < keywordCount; i++) {
-                keywords.add(in.readUTF().toLowerCase());
+                keywords.add(in.readUTF());
             }
             metadata.put(blockId, keywords);
             saveMetadata();
@@ -106,22 +106,25 @@ public class BlockStorageServer {
 
     private static void listBlocks(DataOutputStream out) throws IOException {
         String[] files = new File(BLOCK_DIR).list();
-        if (files == null) files = new String[0];
+        if (files == null)
+            files = new String[0];
         out.writeInt(files.length);
-        for (String f : files) out.writeUTF(f);
+        for (String f : files)
+            out.writeUTF(f);
         out.flush();
     }
 
     private static void searchBlocks(DataInputStream in, DataOutputStream out) throws IOException {
-        String keyword = in.readUTF().toLowerCase();
+        String token = in.readUTF();
         List<String> results = new ArrayList<>();
         for (Map.Entry<String, List<String>> entry : metadata.entrySet()) {
-            if (entry.getValue().contains(keyword)) {
-                results.add(entry.getKey());
+            if (entry.getValue().contains(token)) {
+                results.add(entry.getKey()); // blockId
             }
         }
         out.writeInt(results.size());
-        for (String f : results) out.writeUTF(f);
+        for (String b : results)
+            out.writeUTF(b);
         out.flush();
     }
 
@@ -135,7 +138,8 @@ public class BlockStorageServer {
 
     private static void loadMetadata() {
         File f = new File(META_FILE);
-        if (!f.exists()) return;
+        if (!f.exists())
+            return;
         try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(f))) {
             metadata = (Map<String, List<String>>) ois.readObject();
         } catch (IOException | ClassNotFoundException e) {
