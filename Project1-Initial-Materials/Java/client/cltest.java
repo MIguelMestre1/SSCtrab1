@@ -2,13 +2,14 @@ import java.io.*;
 import java.net.*;
 import java.security.*;
 import java.util.*;
+
 import javax.crypto.SecretKey;
 
 public class cltest {
     private static final int PORT = 5000;
     private static final String INDEX_FILE = "client_index.ser";
     private static final String KEY_FILE = "clientkey.bin";
-    private static final String META_KEY_FILE = "metaKey.bin";
+    private static final String CLIENT_KEY_STORE = "clientkeystore.jceks";
     private static final int BLOCK_SIZE = 4096;
 
     private static Map<String, List<String>> fileIndex = new HashMap<>();
@@ -26,17 +27,27 @@ public class cltest {
 
         loadIndex();
 
-        // Load or generate AES key
-        SecretKey key;
-        File keyFile = new File(KEY_FILE);
-        if (keyFile.exists())
-            key = CryptoStuff.loadKey(KEY_FILE);
-        else {
-            key = CryptoStuff.generateKey();
-            CryptoStuff.saveKey(key, KEY_FILE);
+        Scanner inputScanner = new Scanner(System.in);
+        KeyStore clKeyStore = null;
+        String keystorePassword = null;
+
+        while (true) {
+            System.out.print("Enter keystore password: ");
+            keystorePassword = inputScanner.nextLine();
+
+            try {
+                clKeyStore = CryptoStuff.createKeyStore(CLIENT_KEY_STORE, keystorePassword);
+                break;
+            } catch (IOException e) {
+                System.out.println("[ERROR] Incorrect password or corrupted keystore. Please try again.");
+            }
         }
 
-        SecretKey metaKey = CryptoStuff.loadOrGenerateKeywordKey(META_KEY_FILE);
+        // Load or generate the AES key inside the keystore
+        SecretKey key = CryptoStuff.loadOrGenerateAESKey(clKeyStore, "clientAESKey", keystorePassword);
+
+        // Load or generate keyword HMAC key
+        SecretKey metaKey = CryptoStuff.loadOrGenerateHMACKey(clKeyStore, "keywordHMACKey", keystorePassword);
 
         Socket socket = new Socket("localhost", PORT);
         DataInputStream in = new DataInputStream(socket.getInputStream());
@@ -57,7 +68,7 @@ public class cltest {
                 break;
 
             case "LIST":
-                listFiles();
+                listFiles(out, in);
                 break;
 
             case "SEARCH":
@@ -89,7 +100,7 @@ public class cltest {
 
     // ==== PUT ====
     private static void putFile(File file, List<String> keywords, DataOutputStream out,
-            DataInputStream in, SecretKey key, SecretKey metaKey) throws Exception {
+            DataInputStream in, Key key, Key metaKey) throws Exception {
         List<String> blocks = new ArrayList<>();
         try (FileInputStream fis = new FileInputStream(file)) {
             byte[] buffer = new byte[BLOCK_SIZE];
@@ -130,17 +141,27 @@ public class cltest {
         }
         fileIndex.put(file.getName(), blocks);
         System.out.println("\n File stored securely with " + blocks.size() + " blocks.");
+
+        if (file.delete()) {
+            System.out.println("[INFO] Original file deleted from client after upload: " + file.getName());
+        } else {
+            System.out.println("[WARN] Could not delete local file: " + file.getAbsolutePath());
+        }
     }
 
     // ==== GET ====
     private static void getFile(String filename, String outDir, DataOutputStream out,
-            DataInputStream in, SecretKey key) throws Exception {
+            DataInputStream in, Key key) throws Exception {
         List<String> blocks = fileIndex.get(filename);
         if (blocks == null) {
             System.out.println("File not found in local index.");
             return;
         }
-        File outFile = new File(outDir, "retrieved_" + filename);
+        File clientDir = new File("clientfiles");
+        if (!clientDir.exists())
+            clientDir.mkdirs();
+
+        File outFile = new File(clientDir, filename);
         try (FileOutputStream fos = new FileOutputStream(outFile)) {
             for (String blockId : blocks) {
                 out.writeUTF("GET_BLOCK");
@@ -167,11 +188,11 @@ public class cltest {
             }
         }
         System.out.println();
-        System.out.println("File reconstructed: retrieved_" + filename);
+        System.out.println("File reconstructed at: clientfiles");
     }
 
     // ==== CHECK INTEGRITY ====
-    private static void checkIntegrity(String path, DataOutputStream out, DataInputStream in, SecretKey key)
+    private static void checkIntegrity(String path, DataOutputStream out, DataInputStream in, Key key)
             throws Exception {
         File f = new File(path);
         String filename = f.getName();
@@ -211,7 +232,7 @@ public class cltest {
     }
 
     // ==== SEARCH ====
-    private static void searchFiles(String keyword, DataOutputStream out, DataInputStream in, SecretKey metaKey)
+    private static void searchFiles(String keyword, DataOutputStream out, DataInputStream in, Key metaKey)
             throws IOException, Exception {
 
         String token = CryptoStuff.generateKeywordToken(metaKey, keyword);
@@ -227,10 +248,21 @@ public class cltest {
     }
 
     // ==== LIST ====
-    private static void listFiles() {
-        System.out.println("\nStored files:");
-        for (String f : fileIndex.keySet())
-            System.out.println(" - " + f);
+    private static void listFiles(DataOutputStream out, DataInputStream in) throws IOException {
+        out.writeUTF("LIST_BLOCKS");
+        out.flush();
+
+        int numBlocks = in.readInt();
+        if (numBlocks == 0) {
+            System.out.println("\n[INFO] No files stored on the server.");
+            return;
+        }
+
+        System.out.println("\n[INFO] Files stored on the server:");
+        for (int i = 0; i < numBlocks; i++) {
+            String blockName = in.readUTF();
+            System.out.println(" - " + blockName);
+        }
     }
 
     // ==== INDEX ====

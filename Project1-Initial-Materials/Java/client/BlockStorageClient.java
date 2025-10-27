@@ -1,36 +1,45 @@
 
 import java.io.*;
 import java.net.*;
+import java.security.Key;
 import java.security.MessageDigest;
 import java.util.*;
 
 import javax.crypto.SecretKey;
+import java.security.KeyStore;
 
 public class BlockStorageClient {
     private static final int PORT = 5000;
     private static final int BLOCK_SIZE = 4096;
     private static final String INDEX_FILE = "client_index.ser";
-    private static final String KEY_FILE = "clientkey.bin";
-    private static final String META_KEY_FILE = "metaKey.bin";
+    private static final String CLIENT_KEY_STORE = "clientkeystore.jceks";
 
     private static Map<String, List<String>> fileIndex = new HashMap<>();
 
     public static void main(String[] args) throws IOException, ClassNotFoundException, Exception {
         loadIndex();
 
-        SecretKey key;
-        File keyFile = new File(KEY_FILE);
-        if (keyFile.exists()) {
-            key = CryptoStuff.loadKey(KEY_FILE);
-            System.out.println("Existing AES key loaded.");
-        } else {
-            key = CryptoStuff.generateKey();
-            CryptoStuff.saveKey(key, KEY_FILE);
-            System.out.println("New AES key generated and saved to " + KEY_FILE);
+        Scanner inputScanner = new Scanner(System.in);
+        KeyStore clKeyStore = null;
+        String keystorePassword = null;
+
+        while (true) {
+            System.out.print("Enter keystore password: ");
+            keystorePassword = inputScanner.nextLine();
+
+            try {
+                clKeyStore = CryptoStuff.createKeyStore(CLIENT_KEY_STORE, keystorePassword);
+                break;
+            } catch (IOException e) {
+                System.out.println("[ERROR] Incorrect password or corrupted keystore. Please try again.");
+            }
         }
 
-        SecretKey metaKey = CryptoStuff.loadOrGenerateKeywordKey(META_KEY_FILE);
-        System.out.println("Keyword key ready (metaKey.bin).");
+        // Load or generate the AES key inside the keystore
+        SecretKey key = CryptoStuff.loadOrGenerateAESKey(clKeyStore, "clientAESKey", keystorePassword);
+
+        // Load or generate keyword HMAC key
+        SecretKey metaKey = CryptoStuff.loadOrGenerateHMACKey(clKeyStore, "keywordHMACKey", keystorePassword);
 
         Socket socket = new Socket("localhost", PORT);
         try (
@@ -69,17 +78,19 @@ public class BlockStorageClient {
                         break;
 
                     case "LIST":
-                        if (fileIndex.isEmpty()) {
-                            System.out.println("\n[INFO] No files stored in local index.");
+                        out.writeUTF("LIST_BLOCKS");
+                        out.flush();
+
+                        int numBlocks = in.readInt();
+                        if (numBlocks == 0) {
+                            System.out.println("\n[INFO] No files stored on the server.");
                             break;
                         }
 
-                        System.out.println("\n[INFO] Files stored in local index:");
-                        for (Map.Entry<String, List<String>> entry : fileIndex.entrySet()) {
-                            System.out.println(" -> " + entry.getKey() + " (" + entry.getValue().size() + " blocks):");
-                            for (String blockId : entry.getValue()) {
-                                System.out.println("     -" + blockId);
-                            }
+                        System.out.println("\n[INFO] Files stored on the server:");
+                        for (int i = 0; i < numBlocks; i++) {
+                            String blockName = in.readUTF();
+                            System.out.println(" - " + blockName);
                         }
                         break;
 
@@ -106,7 +117,7 @@ public class BlockStorageClient {
     }
 
     private static void putFile(File file, List<String> keywords,
-            DataOutputStream out, DataInputStream in, SecretKey key, SecretKey metaKey) throws Exception {
+            DataOutputStream out, DataInputStream in, Key key, Key metaKey) throws Exception {
         List<String> blocks = new ArrayList<>();
         try (FileInputStream fis = new FileInputStream(file)) {
             byte[] buffer = new byte[BLOCK_SIZE];
@@ -149,16 +160,27 @@ public class BlockStorageClient {
         }
         fileIndex.put(file.getName(), blocks);
         System.out.println("\n File stored securely with " + blocks.size() + " encrypted blocks.");
+
+        if (file.delete()) {
+            System.out.println("[INFO] Original file deleted from client after upload: " + file.getName());
+        } else {
+            System.out.println("[WARN] Could not delete local file: " + file.getAbsolutePath());
+        }
     }
 
     private static void getFile(String filename,
-            DataOutputStream out, DataInputStream in, SecretKey key) throws Exception {
+            DataOutputStream out, DataInputStream in, Key key) throws Exception {
         List<String> blocks = fileIndex.get(filename);
         if (blocks == null) {
             System.out.println("File not found in local index.");
             return;
         }
-        try (FileOutputStream fos = new FileOutputStream("retrieved_" + filename)) {
+        File clientDir = new File("clientfiles");
+        if (!clientDir.exists())
+            clientDir.mkdirs();
+
+        File outFile = new File(clientDir, filename);
+        try (FileOutputStream fos = new FileOutputStream(outFile)) {
             for (String blockId : blocks) {
                 out.writeUTF("GET_BLOCK");
                 out.writeUTF(blockId);
@@ -178,13 +200,14 @@ public class BlockStorageClient {
             }
         }
         System.out.println();
-        System.out.println("File reconstructed: retrieved_" + filename);
+        System.out.println("File reconstructed at: clientfiles");
+
     }
 
     private static void searchFiles(String keyword, DataOutputStream out,
-            DataInputStream in, SecretKey metaKey) throws Exception {
+            DataInputStream in, Key metaKey) throws Exception {
 
-        // gera token determinístico para a keyword
+        // gera token para a keyword
         String token = CryptoStuff.generateKeywordToken(metaKey, keyword);
 
         out.writeUTF("SEARCH");
