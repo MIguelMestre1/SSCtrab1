@@ -1,0 +1,14 @@
+###################################################  LAB2 ##################################################################################
+Symetric Encription so garante que ninguém mexeu na mensagem enviada, mas não prova que alguém especifico enviou essa mensagem. Para isso é preciso assymetric encription
+
+hmac -primitiva que é um hash de um segredo common  Mac-message authenctication code
+
+cmac  -primitiva que é uma funcao criptografica com um segredo comun
+
+
+Ek=[P|| Hmack1(p)]   k(chave) e k1(chave (common secret))
+
+###################################################  PROJ1 ##################################################################################
+
+- alterar o list para listar todos os ficheiros q tao no blockStorageServer
+

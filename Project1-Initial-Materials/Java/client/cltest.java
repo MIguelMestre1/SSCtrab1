@@ -180,7 +180,7 @@ public class cltest {
                     fos.write(decrypted);
                     System.out.print(".");
                 } catch (javax.crypto.AEADBadTagException e) {
-                    System.out.println("\n✖ Integrity FAILED for block " + blockId);
+                    System.out.println("\nIntegrity FAILED for block " + blockId);
                     fos.close();
                     outFile.delete();
                     return;
@@ -211,7 +211,7 @@ public class cltest {
 
             int length = in.readInt();
             if (length == -1) {
-                System.out.println("✖ Missing block: " + blockId);
+                System.out.println("Missing block: " + blockId);
                 allOk = false;
                 continue;
             }

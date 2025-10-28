@@ -88,9 +88,16 @@ public class BlockStorageClient {
                         }
 
                         System.out.println("\n[INFO] Files stored on the server:");
+                        Set<String> printedFiles = new HashSet<>();
+
                         for (int i = 0; i < numBlocks; i++) {
-                            String blockName = in.readUTF();
-                            System.out.println(" - " + blockName);
+                            String blockId = in.readUTF();
+                            String fileName = findFileByBlock(blockId);
+
+                            if (fileName != null && !printedFiles.contains(fileName)) {
+                                System.out.println(" - " + fileName);
+                                printedFiles.add(fileName);
+                            }
                         }
                         break;
 
@@ -172,7 +179,7 @@ public class BlockStorageClient {
             DataOutputStream out, DataInputStream in, Key key) throws Exception {
         List<String> blocks = fileIndex.get(filename);
         if (blocks == null) {
-            System.out.println("File not found in local index.");
+            System.out.println("File not found.");
             return;
         }
         File clientDir = new File("clientfiles");
@@ -216,14 +223,18 @@ public class BlockStorageClient {
 
         int count = in.readInt();
         System.out.println();
-        System.out.println("Search results:");
-        for (int i = 0; i < count; i++) {
-            String blockId = in.readUTF();
-            String fileName = findFileByBlock(blockId);
-            if (fileName != null)
-                System.out.println(" - " + fileName + " (block: " + blockId + ")");
-            else
-                System.out.println(" - block: " + blockId);
+        if (count != 0) {
+            System.out.println("Search results:");
+            for (int i = 0; i < count; i++) {
+                String blockId = in.readUTF();
+                String fileName = findFileByBlock(blockId);
+                if (fileName != null)
+                    System.out.println(" - " + fileName + " (block: " + blockId + ")");
+                else
+                    System.out.println(" - block: " + blockId);
+            }
+        } else {
+            System.out.println("There is no file with keyword " + keyword + " stored in the server");
         }
     }
 

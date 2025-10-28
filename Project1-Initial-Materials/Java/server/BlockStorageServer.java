@@ -102,6 +102,15 @@ public class BlockStorageServer {
             out.write(data);
         }
         out.flush();
+
+        if (blockFile.delete()) {
+            System.out.println("[INFO] Deleted block after GET: " + blockFile.getName());
+        } else {
+            System.err.println("[WARN] Could not delete block file: " + blockFile.getAbsolutePath());
+        }
+
+        metadata.remove(blockId);
+        saveMetadata();
     }
 
     private static void listBlocks(DataOutputStream out) throws IOException {
