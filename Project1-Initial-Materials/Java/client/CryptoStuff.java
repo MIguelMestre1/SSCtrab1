@@ -5,52 +5,104 @@ import javax.crypto.SecretKey;
 
 import java.security.Key;
 import java.security.KeyStore;
+import java.security.MessageDigest;
 
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.Base64;
 
 public class CryptoStuff {
-    private static final int AES_KEY_SIZE = 256;
     private static final int GCM_NONCE_LENGTH = 12;
     private static final int GCM_TAG_LENGTH = 128;
 
-    // Cifra um bloco de bytes e devolve nonce+ciphertext+tag
-    public static byte[] encrypt(byte[] plaintext, Key key) throws Exception {
-        byte[] nonce = new byte[GCM_NONCE_LENGTH];
-        new SecureRandom().nextBytes(nonce);
+    public static byte[] encrypt(byte[] plaintext, Key key, Key HMacKey, CryptoConfig cfg) throws Exception {
+        if (cfg.isAEAD()) {
+            // AES/GCM or ChaCha20-Poly1305 - AEAD modes
+            Cipher cipher = Cipher.getInstance(cfg.cipherMode);
+            // System.out.println("[INFO] Encrypting with " + cipher);
+            byte[] nonce = new byte[GCM_NONCE_LENGTH];
+            new SecureRandom().nextBytes(nonce);
+            GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
+            cipher.init(Cipher.ENCRYPT_MODE, key, spec);
+            byte[] ciphertext = cipher.doFinal(plaintext);
 
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
-        cipher.init(Cipher.ENCRYPT_MODE, key, spec);
+            byte[] result = new byte[nonce.length + ciphertext.length];
+            System.arraycopy(nonce, 0, result, 0, nonce.length);
+            System.arraycopy(ciphertext, 0, result, nonce.length, ciphertext.length);
+            return result;
+        } else {
+            // AES/CBC + HMAC
+            Cipher cipher = Cipher.getInstance(cfg.cipherMode);
+            // System.out.println("[INFO] Encrypting with " + cipher);
+            byte[] iv = new byte[cipher.getBlockSize()];
+            new SecureRandom().nextBytes(iv);
+            cipher.init(Cipher.ENCRYPT_MODE, key, new javax.crypto.spec.IvParameterSpec(iv));
+            byte[] ciphertext = cipher.doFinal(plaintext);
 
-        byte[] ciphertext = cipher.doFinal(plaintext);
+            // Add HMAC for integrity if defined
+            if (!cfg.hmacAlgo.equalsIgnoreCase("NONE")) {
+                Mac mac = Mac.getInstance(cfg.hmacAlgo);
+                mac.init(HMacKey);
+                mac.update(iv);
+                mac.update(ciphertext);
+                byte[] tag = mac.doFinal();
 
-        byte[] result = new byte[nonce.length + ciphertext.length];
-        System.arraycopy(nonce, 0, result, 0, nonce.length);
-        System.arraycopy(ciphertext, 0, result, nonce.length, ciphertext.length);
-        return result;
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                out.write(iv);
+                out.write(ciphertext);
+                out.write(tag);
+                return out.toByteArray();
+            } else {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                out.write(iv);
+                out.write(ciphertext);
+                return out.toByteArray();
+            }
+        }
     }
 
-    // Decifra um bloco a partir de nonce+ciphertext+tag
-    public static byte[] decrypt(byte[] encrypted, Key key) throws Exception {
-        byte[] nonce = new byte[GCM_NONCE_LENGTH];
-        System.arraycopy(encrypted, 0, nonce, 0, nonce.length);
-        byte[] ciphertext = new byte[encrypted.length - nonce.length];
-        System.arraycopy(encrypted, nonce.length, ciphertext, 0, ciphertext.length);
+    public static byte[] decrypt(byte[] data, Key key, Key HMacKey, CryptoConfig cfg) throws Exception {
+        if (cfg.isAEAD()) {
+            // AES/GCM or ChaCha20-Poly1305
+            Cipher cipher = Cipher.getInstance(cfg.cipherMode);
+            byte[] nonce = Arrays.copyOfRange(data, 0, 12);
+            byte[] ciphertext = Arrays.copyOfRange(data, 12, data.length);
+            GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
+            cipher.init(Cipher.DECRYPT_MODE, key, spec);
+            return cipher.doFinal(ciphertext);
+        } else {
+            Cipher cipher = Cipher.getInstance(cfg.cipherMode);
+            int blockSize = cipher.getBlockSize();
+            int tagLen = Mac.getInstance(cfg.hmacAlgo).getMacLength();
+            byte[] iv = Arrays.copyOfRange(data, 0, blockSize);
+            byte[] ciphertext, tag;
 
-        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
-        cipher.init(Cipher.DECRYPT_MODE, key, spec);
+            if (!cfg.hmacAlgo.equalsIgnoreCase("NONE")) {
+                ciphertext = Arrays.copyOfRange(data, blockSize, data.length - tagLen);
+                tag = Arrays.copyOfRange(data, data.length - tagLen, data.length);
+                Mac mac = Mac.getInstance(cfg.hmacAlgo);
+                mac.init(HMacKey);
+                mac.update(iv);
+                mac.update(ciphertext);
+                byte[] expectedTag = mac.doFinal();
+                if (!MessageDigest.isEqual(tag, expectedTag)) {
+                    throw new SecurityException("HMAC verification failed!");
+                }
+            } else {
+                ciphertext = Arrays.copyOfRange(data, blockSize, data.length);
+            }
 
-        return cipher.doFinal(ciphertext);
+            cipher.init(Cipher.DECRYPT_MODE, key, new javax.crypto.spec.IvParameterSpec(iv));
+            return cipher.doFinal(ciphertext);
+        }
     }
 
     public static KeyStore createKeyStore(String fileName, String pw) throws Exception {
@@ -69,19 +121,19 @@ public class CryptoStuff {
         return keyStore;
     }
 
-    public static SecretKey loadOrGenerateAESKey(KeyStore keyStore, String alias, String ksPassword)
+    public static SecretKey loadOrGenerateAESKey(KeyStore keyStore, String alias, String ksPassword, CryptoConfig cfg)
             throws Exception {
         // Try to retrieve the AES key from keystore
         if (keyStore.containsAlias(alias)) {
             KeyStore.ProtectionParameter protParam = new KeyStore.PasswordProtection(ksPassword.toCharArray());
             KeyStore.SecretKeyEntry entry = (KeyStore.SecretKeyEntry) keyStore.getEntry(alias, protParam);
-            System.out.println("[INFO] Loaded AES key from keystore.");
+            // System.out.println("[INFO] Loaded AES key from keystore.");
             return entry.getSecretKey();
         }
 
         // Otherwise, generate and store a new one
         KeyGenerator keyGen = KeyGenerator.getInstance("AES");
-        keyGen.init(256);
+        keyGen.init(cfg.keySize);
         SecretKey newKey = keyGen.generateKey();
 
         KeyStore.SecretKeyEntry skEntry = new KeyStore.SecretKeyEntry(newKey);
@@ -96,18 +148,19 @@ public class CryptoStuff {
         return newKey;
     }
 
-    public static SecretKey loadOrGenerateHMACKey(KeyStore keyStore, String alias, String ksPassword)
+    public static SecretKey loadOrGenerateHMACKey(KeyStore keyStore, String alias, String ksPassword, CryptoConfig cfg)
             throws Exception {
         if (keyStore.containsAlias(alias)) {
             KeyStore.ProtectionParameter prot = new KeyStore.PasswordProtection(ksPassword.toCharArray());
             KeyStore.SecretKeyEntry entry = (KeyStore.SecretKeyEntry) keyStore.getEntry(alias, prot);
-            System.out.println("[INFO] Loaded HMAC key from keystore.");
+            // System.out.println("[INFO] Loaded HMAC key from keystore.");
             return entry.getSecretKey();
         }
 
-        byte[] keyBytes = new byte[32];
+        int macKeySize = cfg.macKeySize;
+        byte[] keyBytes = new byte[macKeySize / 8];
         new SecureRandom().nextBytes(keyBytes);
-        SecretKey newKey = new SecretKeySpec(keyBytes, "HmacSHA256");
+        SecretKey newKey = new SecretKeySpec(keyBytes, cfg.hmacAlgo);
 
         KeyStore.SecretKeyEntry skEntry = new KeyStore.SecretKeyEntry(newKey);
         KeyStore.PasswordProtection prot = new KeyStore.PasswordProtection(ksPassword.toCharArray());
@@ -121,7 +174,6 @@ public class CryptoStuff {
         return newKey;
     }
 
-    // Gera o token determinístico para uma keyword
     public static String generateKeywordToken(Key keywordKey, String keyword) throws Exception {
         Mac mac = Mac.getInstance("HmacSHA256");
         mac.init(keywordKey);
@@ -129,39 +181,3 @@ public class CryptoStuff {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(tag);
     }
 }
-
-// Gera e devolve uma nova chave AES-256
-// public static Key generateKey() throws Exception {
-// KeyGenerator keyGen = KeyGenerator.getInstance("AES");
-// keyGen.init(AES_KEY_SIZE);
-// return keyGen.generateKey();
-// }
-
-// // Guarda a chave num ficheiro Base64
-// public static void saveKey(Key key, String path) throws Exception {
-// String encoded = Base64.getEncoder().encodeToString(key.getEncoded());
-// java.nio.file.Files.write(java.nio.file.Paths.get(path), encoded.getBytes());
-// }
-
-// // Lê a chave de um ficheiro Base64
-// public static Key loadKey(String path) throws Exception {
-// byte[] data =
-// java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path));
-// byte[] decoded = Base64.getDecoder().decode(new String(data));
-// return new javax.crypto.spec.SecretKeySpec(decoded, "AES");
-// }
-
-// public static Key loadOrGenerateKeywordKey(String path) throws Exception {
-// File f = new File(path);
-// if (f.exists()) {
-// byte[] encoded = Files.readAllBytes(f.toPath());
-// byte[] raw = Base64.getDecoder().decode(new String(encoded).trim());
-// return new SecretKeySpec(raw, "HmacSHA256");
-// } else {
-// byte[] key = new byte[32]; // 256 bits
-// new SecureRandom().nextBytes(key);
-// Key secret = new SecretKeySpec(key, "HmacSHA256");
-// Files.write(f.toPath(), Base64.getEncoder().encode(secret.getEncoded()));
-// return secret;
-// }
-// }

@@ -35,11 +35,15 @@ public class BlockStorageClient {
             }
         }
 
-        // Load or generate the AES key inside the keystore
-        SecretKey key = CryptoStuff.loadOrGenerateAESKey(clKeyStore, "clientAESKey", keystorePassword);
+        // Load the CryptoConfig file
+        CryptoConfig cfg = CryptoConfig.load("cryptoconfig.txt");
+        System.out.println("[INFO] Loaded crypto config: " + cfg.cipherMode);
+
+        // Load or generate the AES key
+        SecretKey key = CryptoStuff.loadOrGenerateAESKey(clKeyStore, "clientAESKey", keystorePassword, cfg);
 
         // Load or generate keyword HMAC key
-        SecretKey metaKey = CryptoStuff.loadOrGenerateHMACKey(clKeyStore, "keywordHMACKey", keystorePassword);
+        SecretKey HMacKey = CryptoStuff.loadOrGenerateHMACKey(clKeyStore, "HMACKey", keystorePassword, cfg);
 
         Socket socket = new Socket("localhost", PORT);
         try (
@@ -67,14 +71,14 @@ public class BlockStorageClient {
                                 keywords.add(kw.trim().toLowerCase());
                         }
 
-                        putFile(file, keywords, out, in, key, metaKey);
+                        putFile(file, keywords, out, in, key, HMacKey, cfg);
                         saveIndex();
                         break;
 
                     case "GET":
                         System.out.print("Enter filename to retrieve: ");
                         String filename = scanner.nextLine();
-                        getFile(filename, out, in, key);
+                        getFile(filename, out, in, key, HMacKey, cfg);
                         break;
 
                     case "LIST":
@@ -104,7 +108,7 @@ public class BlockStorageClient {
                     case "SEARCH":
                         System.out.print("Enter keyword to search: ");
                         String keyword = scanner.nextLine();
-                        searchFiles(keyword, out, in, metaKey);
+                        searchFiles(keyword, out, in, HMacKey);
                         break;
 
                     case "EXIT":
@@ -124,7 +128,7 @@ public class BlockStorageClient {
     }
 
     private static void putFile(File file, List<String> keywords,
-            DataOutputStream out, DataInputStream in, Key key, Key metaKey) throws Exception {
+            DataOutputStream out, DataInputStream in, Key key, Key HMacKey, CryptoConfig cfg) throws Exception {
         List<String> blocks = new ArrayList<>();
         try (FileInputStream fis = new FileInputStream(file)) {
             byte[] buffer = new byte[BLOCK_SIZE];
@@ -132,7 +136,7 @@ public class BlockStorageClient {
             int blockNum = 0;
             while ((bytesRead = fis.read(buffer)) != -1) {
                 byte[] plainBlock = Arrays.copyOf(buffer, bytesRead);
-                byte[] encryptedBlock = CryptoStuff.encrypt(plainBlock, key);
+                byte[] encryptedBlock = CryptoStuff.encrypt(plainBlock, key, HMacKey, cfg);
 
                 // Block ID (opaco)
                 String blockId = Base64.getUrlEncoder().encodeToString(
@@ -147,7 +151,7 @@ public class BlockStorageClient {
                 if (blockNum == 0) {
                     out.writeInt(keywords.size());
                     for (String kw : keywords) {
-                        String token = CryptoStuff.generateKeywordToken(metaKey, kw);
+                        String token = CryptoStuff.generateKeywordToken(HMacKey, kw);
                         out.writeUTF(token);
                     }
                 } else {
@@ -176,46 +180,68 @@ public class BlockStorageClient {
     }
 
     private static void getFile(String filename,
-            DataOutputStream out, DataInputStream in, Key key) throws Exception {
+            DataOutputStream out, DataInputStream in, Key key, Key HMacKey, CryptoConfig cfg) throws Exception {
         List<String> blocks = fileIndex.get(filename);
         if (blocks == null) {
             System.out.println("File not found.");
             return;
         }
+
         File clientDir = new File("clientfiles");
         if (!clientDir.exists())
             clientDir.mkdirs();
 
         File outFile = new File(clientDir, filename);
+        boolean allOk = true;
+
         try (FileOutputStream fos = new FileOutputStream(outFile)) {
             for (String blockId : blocks) {
                 out.writeUTF("GET_BLOCK");
                 out.writeUTF(blockId);
                 out.flush();
+
                 int length = in.readInt();
                 if (length == -1) {
-                    System.out.println("Block not found: " + blockId);
-                    return;
+                    System.out.println("Missing block: " + blockId);
+                    allOk = false;
+                    continue;
                 }
+
                 byte[] encrypted = new byte[length];
                 in.readFully(encrypted);
 
-                // Decifrar e verificar integridade (GCM)
-                byte[] decrypted = CryptoStuff.decrypt(encrypted, key);
-                fos.write(decrypted);
-                System.out.print(".");
+                try {
+                    byte[] decrypted = CryptoStuff.decrypt(encrypted, key, HMacKey, cfg);
+                    fos.write(decrypted);
+                    System.out.print(".");
+                } catch (javax.crypto.AEADBadTagException e) {
+                    System.out.println("\nIntegrity FAILED for block: " + blockId);
+                    allOk = false;
+                    break;
+                }
             }
         }
-        System.out.println();
-        System.out.println("File reconstructed at: clientfiles");
 
+        if (allOk) {
+            out.writeUTF("DELETE_BLOCKS");
+            out.writeInt(blocks.size());
+            for (String blockId : blocks) {
+                out.writeUTF(blockId);
+            }
+            out.flush();
+
+            String response = in.readUTF();
+            System.out.println("\n[SERVER] " + response);
+        } else {
+            System.out.println("\n[WARN] Integrity check failed. File not deleted from server.");
+        }
     }
 
     private static void searchFiles(String keyword, DataOutputStream out,
-            DataInputStream in, Key metaKey) throws Exception {
+            DataInputStream in, Key HMacKey) throws Exception {
 
         // gera token para a keyword
-        String token = CryptoStuff.generateKeywordToken(metaKey, keyword);
+        String token = CryptoStuff.generateKeywordToken(HMacKey, keyword);
 
         out.writeUTF("SEARCH");
         out.writeUTF(token);

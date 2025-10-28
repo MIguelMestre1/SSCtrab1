@@ -1,6 +1,3 @@
-// Ref. Iniial code for a Java Implentation of a Block-Storage Server
-// This is a naive and insecure implementation as initial reference for
-// Project assignment
 
 import java.io.*;
 import java.net.*;
@@ -48,6 +45,9 @@ public class BlockStorageServer {
                     case "SEARCH":
                         searchBlocks(in, out);
                         break;
+                    case "DELETE_BLOCKS":
+                        deleteBlocks(in, out);
+                        break;
                     case "EXIT":
                         return;
                     default:
@@ -69,8 +69,12 @@ public class BlockStorageServer {
 
         // Write block to disk
         File blockFile = new File(BLOCK_DIR, blockId);
-        try (FileOutputStream fos = new FileOutputStream(blockFile)) {
-            fos.write(data);
+        if (blockFile.exists()) {
+            System.out.println("[INFO] Duplicate block detected: " + blockId + " (not rewritten)");
+        } else {
+            try (FileOutputStream fos = new FileOutputStream(blockFile)) {
+                fos.write(data);
+            }
         }
 
         // Read keywords
@@ -102,15 +106,6 @@ public class BlockStorageServer {
             out.write(data);
         }
         out.flush();
-
-        if (blockFile.delete()) {
-            System.out.println("[INFO] Deleted block after GET: " + blockFile.getName());
-        } else {
-            System.err.println("[WARN] Could not delete block file: " + blockFile.getAbsolutePath());
-        }
-
-        metadata.remove(blockId);
-        saveMetadata();
     }
 
     private static void listBlocks(DataOutputStream out) throws IOException {
@@ -134,6 +129,28 @@ public class BlockStorageServer {
         out.writeInt(results.size());
         for (String b : results)
             out.writeUTF(b);
+        out.flush();
+    }
+
+    private static void deleteBlocks(DataInputStream in, DataOutputStream out) throws IOException {
+        int numBlocks = in.readInt();
+        int deletedCount = 0;
+
+        for (int i = 0; i < numBlocks; i++) {
+            String blockId = in.readUTF();
+            File blockFile = new File(BLOCK_DIR, blockId);
+
+            if (blockFile.exists() && blockFile.delete()) {
+                metadata.remove(blockId);
+                deletedCount++;
+                // System.out.println("[INFO] Deleted block: " + blockId);
+            } else {
+                System.err.println("[WARN] Could not delete block: " + blockId);
+            }
+        }
+
+        saveMetadata();
+        out.writeUTF("DELETED " + deletedCount + " blocks");
         out.flush();
     }
 
