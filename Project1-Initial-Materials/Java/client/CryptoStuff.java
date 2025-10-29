@@ -110,10 +110,10 @@ public class CryptoStuff {
 
         final KeyStore keyStore = KeyStore.getInstance("JCEKS");
         if (file.exists()) {
-            // .keystore file already exists => load it
+            // keystore already exists -> load it
             keyStore.load(new FileInputStream(file), pw.toCharArray());
         } else {
-            // .keystore file not created yet => create it
+            // keystore not created yet -> create it
             keyStore.load(null, null);
             keyStore.store(new FileOutputStream(fileName), pw.toCharArray());
         }
@@ -127,7 +127,6 @@ public class CryptoStuff {
         if (keyStore.containsAlias(alias)) {
             KeyStore.ProtectionParameter protParam = new KeyStore.PasswordProtection(ksPassword.toCharArray());
             KeyStore.SecretKeyEntry entry = (KeyStore.SecretKeyEntry) keyStore.getEntry(alias, protParam);
-            // System.out.println("[INFO] Loaded AES key from keystore.");
             return entry.getSecretKey();
         }
 
@@ -153,7 +152,6 @@ public class CryptoStuff {
         if (keyStore.containsAlias(alias)) {
             KeyStore.ProtectionParameter prot = new KeyStore.PasswordProtection(ksPassword.toCharArray());
             KeyStore.SecretKeyEntry entry = (KeyStore.SecretKeyEntry) keyStore.getEntry(alias, prot);
-            // System.out.println("[INFO] Loaded HMAC key from keystore.");
             return entry.getSecretKey();
         }
 

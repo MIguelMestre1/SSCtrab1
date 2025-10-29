@@ -43,7 +43,7 @@ public class BlockStorageClient {
         SecretKey key = CryptoStuff.loadOrGenerateAESKey(clKeyStore, "clientAESKey", keystorePassword, cfg);
 
         // Load or generate keyword HMAC key
-        SecretKey HMacKey = CryptoStuff.loadOrGenerateHMACKey(clKeyStore, "HMACKey", keystorePassword, cfg);
+        SecretKey HMacKey = CryptoStuff.loadOrGenerateHMACKey(clKeyStore, "clientHMACKey", keystorePassword, cfg);
 
         Socket socket = new Socket("localhost", PORT);
         try (
@@ -138,7 +138,6 @@ public class BlockStorageClient {
                 byte[] plainBlock = Arrays.copyOf(buffer, bytesRead);
                 byte[] encryptedBlock = CryptoStuff.encrypt(plainBlock, key, HMacKey, cfg);
 
-                // Block ID (opaco)
                 String blockId = Base64.getUrlEncoder().encodeToString(
                         MessageDigest.getInstance("SHA-256").digest(encryptedBlock));
 
@@ -147,7 +146,7 @@ public class BlockStorageClient {
                 out.writeInt(encryptedBlock.length);
                 out.write(encryptedBlock);
 
-                // Keywords apenas no primeiro bloco
+                // Keywords only on the first block
                 if (blockNum == 0) {
                     out.writeInt(keywords.size());
                     for (String kw : keywords) {
@@ -240,7 +239,7 @@ public class BlockStorageClient {
     private static void searchFiles(String keyword, DataOutputStream out,
             DataInputStream in, Key HMacKey) throws Exception {
 
-        // gera token para a keyword
+        // generate token for keyword
         String token = CryptoStuff.generateKeywordToken(HMacKey, keyword);
 
         out.writeUTF("SEARCH");

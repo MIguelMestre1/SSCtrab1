@@ -80,7 +80,7 @@ public class cltest {
                     checkIntegrity(args[2], out, in, key, HMacKey, cfg);
                 } else if (args.length >= 2) {
                     String arg = args[1];
-                    String targetDir = args.length >= 3 ? args[2] : "clientfiles"; // default if not provided
+                    String targetDir = args.length >= 3 ? args[2] : "clientfiles"; // default
 
                     // Check if argument is a known filename
                     if (fileIndex.containsKey(arg)) {

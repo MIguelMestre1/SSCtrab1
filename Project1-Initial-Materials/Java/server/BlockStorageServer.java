@@ -143,7 +143,6 @@ public class BlockStorageServer {
             if (blockFile.exists() && blockFile.delete()) {
                 metadata.remove(blockId);
                 deletedCount++;
-                // System.out.println("[INFO] Deleted block: " + blockId);
             } else {
                 System.err.println("[WARN] Could not delete block: " + blockId);
             }
