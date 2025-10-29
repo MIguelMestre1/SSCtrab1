@@ -45,7 +45,7 @@ public class cltest {
         // System.out.println("[INFO] Loaded crypto config: " + cfg.cipherMode);
 
         // Load or generate AES key
-        SecretKey key = CryptoStuff.loadOrGenerateAESKey(clKeyStore, "clientAESKey", keystorePassword, cfg);
+        SecretKey key = CryptoStuff.loadOrGenerateKey(clKeyStore, "clientKey", keystorePassword, cfg);
 
         // Load or generate HMAC key
         SecretKey HMacKey = CryptoStuff.loadOrGenerateHMACKey(clKeyStore, "HMACKey", keystorePassword, cfg);

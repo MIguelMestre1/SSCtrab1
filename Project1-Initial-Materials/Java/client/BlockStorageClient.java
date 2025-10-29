@@ -40,7 +40,7 @@ public class BlockStorageClient {
         System.out.println("[INFO] Loaded crypto config: " + cfg.cipherMode);
 
         // Load or generate the AES key
-        SecretKey key = CryptoStuff.loadOrGenerateAESKey(clKeyStore, "clientAESKey", keystorePassword, cfg);
+        SecretKey key = CryptoStuff.loadOrGenerateKey(clKeyStore, "clientKey", keystorePassword, cfg);
 
         // Load or generate keyword HMAC key
         SecretKey HMacKey = CryptoStuff.loadOrGenerateHMACKey(clKeyStore, "clientHMACKey", keystorePassword, cfg);

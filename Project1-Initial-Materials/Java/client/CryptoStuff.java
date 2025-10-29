@@ -121,7 +121,7 @@ public class CryptoStuff {
         return keyStore;
     }
 
-    public static SecretKey loadOrGenerateAESKey(KeyStore keyStore, String alias, String ksPassword, CryptoConfig cfg)
+    public static SecretKey loadOrGenerateKey(KeyStore keyStore, String alias, String ksPassword, CryptoConfig cfg)
             throws Exception {
         // Try to retrieve the AES key from keystore
         if (keyStore.containsAlias(alias)) {
@@ -130,8 +130,15 @@ public class CryptoStuff {
             return entry.getSecretKey();
         }
 
+        String algorithm;
+        if (cfg.cipherMode.toUpperCase().contains("CHACHA20")) {
+            algorithm = "ChaCha20";
+        } else {
+            algorithm = "AES";
+        }
+
         // Otherwise, generate and store a new one
-        KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+        KeyGenerator keyGen = KeyGenerator.getInstance(algorithm);
         keyGen.init(cfg.keySize);
         SecretKey newKey = keyGen.generateKey();
 
