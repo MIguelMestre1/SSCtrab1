@@ -8,7 +8,7 @@ README – How to Test the Secure Block Storage System
 2. Open another terminal and run the client
 
    - When running for the first time, it will ask to set the password for future use
-   - It will also create the keystore and generate clientAESKey and clientHMACKey
+   - It will also create the keystore and generate clientKey, clientHMACKey and keywordKey
 
 3. To upload a file to the server
 

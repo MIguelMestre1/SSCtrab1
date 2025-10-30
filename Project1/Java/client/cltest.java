@@ -19,6 +19,7 @@ public class cltest {
             System.out.println("  cltest LIST");
             System.out.println("  cltest SEARCH <keyword>");
             System.out.println("  cltest GET <filename>");
+            System.out.println("  cltest GET <keyword>");
             System.out.println("  cltest GET CHECKINTEGRITY <path/file>");
             return;
         }
