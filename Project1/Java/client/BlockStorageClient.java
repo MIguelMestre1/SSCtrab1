@@ -42,8 +42,11 @@ public class BlockStorageClient {
         // Load or generate the AES key
         SecretKey key = CryptoStuff.loadOrGenerateKey(clKeyStore, "clientKey", keystorePassword, cfg);
 
-        // Load or generate keyword HMAC key
+        // Load or generate HMAC key
         SecretKey HMacKey = CryptoStuff.loadOrGenerateHMACKey(clKeyStore, "clientHMACKey", keystorePassword, cfg);
+
+        // Load or generate HMAC key to generate tokens
+        SecretKey keywordKey = CryptoStuff.loadOrGenerateKeywordKey(clKeyStore, "keywordKey", keystorePassword);
 
         Socket socket = new Socket("localhost", PORT);
         try (
@@ -71,7 +74,7 @@ public class BlockStorageClient {
                                 keywords.add(kw.trim().toLowerCase());
                         }
 
-                        putFile(file, keywords, out, in, key, HMacKey, cfg);
+                        putFile(file, keywords, out, in, key, HMacKey, keywordKey, cfg);
                         saveIndex();
                         break;
 
@@ -128,7 +131,8 @@ public class BlockStorageClient {
     }
 
     private static void putFile(File file, List<String> keywords,
-            DataOutputStream out, DataInputStream in, Key key, Key HMacKey, CryptoConfig cfg) throws Exception {
+            DataOutputStream out, DataInputStream in, Key key, Key HMacKey, Key keywordKey, CryptoConfig cfg)
+            throws Exception {
         List<String> blocks = new ArrayList<>();
         try (FileInputStream fis = new FileInputStream(file)) {
             byte[] buffer = new byte[BLOCK_SIZE];
@@ -150,7 +154,7 @@ public class BlockStorageClient {
                 if (blockNum == 0) {
                     out.writeInt(keywords.size());
                     for (String kw : keywords) {
-                        String token = CryptoStuff.generateKeywordToken(HMacKey, kw);
+                        String token = CryptoStuff.generateKeywordToken(keywordKey, kw);
                         out.writeUTF(token);
                     }
                 } else {

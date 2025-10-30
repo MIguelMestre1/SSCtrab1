@@ -25,4 +25,11 @@ public class CryptoConfig {
         return cipherMode.toUpperCase().contains("GCM") || cipherMode.toUpperCase().contains("CHACHA20");
     }
 
+    public boolean isGCM() {
+        return cipherMode.toUpperCase().contains("GCM");
+    }
+
+    public boolean isChaCha() {
+        return cipherMode.toUpperCase().contains("CHACHA20");
+    }
 }

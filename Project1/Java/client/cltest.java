@@ -50,6 +50,9 @@ public class cltest {
         // Load or generate HMAC key
         SecretKey HMacKey = CryptoStuff.loadOrGenerateHMACKey(clKeyStore, "HMACKey", keystorePassword, cfg);
 
+        // Load or generate HMAC key to generate tokens
+        SecretKey keywordKey = CryptoStuff.loadOrGenerateKeywordKey(clKeyStore, "KeywordKey", keystorePassword);
+
         Socket socket = new Socket("localhost", PORT);
         DataInputStream in = new DataInputStream(socket.getInputStream());
         DataOutputStream out = new DataOutputStream(socket.getOutputStream());
@@ -71,7 +74,7 @@ public class cltest {
                 for (String kw : args[2].split(",")) {
                     keywords.add(kw.trim().toLowerCase());
                 }
-                putFile(file, keywords, out, in, key, HMacKey, cfg);
+                putFile(file, keywords, out, in, key, HMacKey, keywordKey, cfg);
                 saveIndex();
                 break;
 
@@ -119,7 +122,7 @@ public class cltest {
 
     private static void putFile(File file, List<String> keywords,
             DataOutputStream out, DataInputStream in,
-            Key key, Key HMacKey, CryptoConfig cfg) throws Exception {
+            Key key, Key HMacKey, Key keywordKey, CryptoConfig cfg) throws Exception {
         List<String> blocks = new ArrayList<>();
         try (FileInputStream fis = new FileInputStream(file)) {
             byte[] buffer = new byte[BLOCK_SIZE];
@@ -139,7 +142,7 @@ public class cltest {
                 if (blockNum == 0) {
                     out.writeInt(keywords.size());
                     for (String kw : keywords) {
-                        String token = CryptoStuff.generateKeywordToken(HMacKey, kw);
+                        String token = CryptoStuff.generateKeywordToken(keywordKey, kw);
                         out.writeUTF(token);
                     }
                 } else {

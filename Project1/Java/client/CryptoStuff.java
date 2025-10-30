@@ -8,6 +8,7 @@ import java.security.KeyStore;
 import java.security.MessageDigest;
 
 import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 import java.io.ByteArrayOutputStream;
@@ -30,21 +31,33 @@ public class CryptoStuff {
             // System.out.println("[INFO] Encrypting with " + cipher);
             byte[] nonce = new byte[GCM_NONCE_LENGTH];
             new SecureRandom().nextBytes(nonce);
-            GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
-            cipher.init(Cipher.ENCRYPT_MODE, key, spec);
+
+            if (cfg.isChaCha()) {
+                IvParameterSpec iv = new IvParameterSpec(nonce);
+                cipher.init(Cipher.ENCRYPT_MODE, key, iv);
+
+            } else if (cfg.isGCM()) {
+                GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
+                cipher.init(Cipher.ENCRYPT_MODE, key, spec);
+
+            } else {
+                throw new IllegalArgumentException("Unsupported AEAD mode: " + cfg.cipherMode);
+            }
+
             byte[] ciphertext = cipher.doFinal(plaintext);
 
             byte[] result = new byte[nonce.length + ciphertext.length];
             System.arraycopy(nonce, 0, result, 0, nonce.length);
             System.arraycopy(ciphertext, 0, result, nonce.length, ciphertext.length);
             return result;
+
         } else {
             // AES/CBC + HMAC
             Cipher cipher = Cipher.getInstance(cfg.cipherMode);
             // System.out.println("[INFO] Encrypting with " + cipher);
             byte[] iv = new byte[cipher.getBlockSize()];
             new SecureRandom().nextBytes(iv);
-            cipher.init(Cipher.ENCRYPT_MODE, key, new javax.crypto.spec.IvParameterSpec(iv));
+            cipher.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(iv));
             byte[] ciphertext = cipher.doFinal(plaintext);
 
             // Add HMAC for integrity if defined
@@ -60,6 +73,7 @@ public class CryptoStuff {
                 out.write(ciphertext);
                 out.write(tag);
                 return out.toByteArray();
+
             } else {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 out.write(iv);
@@ -75,17 +89,32 @@ public class CryptoStuff {
             Cipher cipher = Cipher.getInstance(cfg.cipherMode);
             byte[] nonce = Arrays.copyOfRange(data, 0, 12);
             byte[] ciphertext = Arrays.copyOfRange(data, 12, data.length);
-            GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
-            cipher.init(Cipher.DECRYPT_MODE, key, spec);
+
+            if (cfg.isChaCha()) {
+                IvParameterSpec iv = new IvParameterSpec(nonce);
+                cipher.init(Cipher.DECRYPT_MODE, key, iv);
+
+            } else if (cfg.isGCM()) {
+                GCMParameterSpec spec = new GCMParameterSpec(GCM_TAG_LENGTH, nonce);
+                cipher.init(Cipher.DECRYPT_MODE, key, spec);
+
+            } else {
+                throw new IllegalArgumentException("Unsupported AEAD mode: " + cfg.cipherMode);
+            }
+
             return cipher.doFinal(ciphertext);
+
         } else {
+
             Cipher cipher = Cipher.getInstance(cfg.cipherMode);
             int blockSize = cipher.getBlockSize();
-            int tagLen = Mac.getInstance(cfg.hmacAlgo).getMacLength();
+            int tagLen = cfg.hmacAlgo.equalsIgnoreCase("NONE") ? 0 : Mac.getInstance(cfg.hmacAlgo).getMacLength();
+
             byte[] iv = Arrays.copyOfRange(data, 0, blockSize);
             byte[] ciphertext, tag;
 
             if (!cfg.hmacAlgo.equalsIgnoreCase("NONE")) {
+
                 ciphertext = Arrays.copyOfRange(data, blockSize, data.length - tagLen);
                 tag = Arrays.copyOfRange(data, data.length - tagLen, data.length);
                 Mac mac = Mac.getInstance(cfg.hmacAlgo);
@@ -100,7 +129,7 @@ public class CryptoStuff {
                 ciphertext = Arrays.copyOfRange(data, blockSize, data.length);
             }
 
-            cipher.init(Cipher.DECRYPT_MODE, key, new javax.crypto.spec.IvParameterSpec(iv));
+            cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
             return cipher.doFinal(ciphertext);
         }
     }
@@ -150,12 +179,17 @@ public class CryptoStuff {
         try (FileOutputStream fos = new FileOutputStream("clientkeystore.jceks")) {
             keyStore.store(fos, ksPassword.toCharArray());
         }
-        System.out.println("[INFO] New AES key generated and stored in keystore.");
+        System.out.println("[INFO] New key generated and stored in keystore.");
         return newKey;
     }
 
     public static SecretKey loadOrGenerateHMACKey(KeyStore keyStore, String alias, String ksPassword, CryptoConfig cfg)
             throws Exception {
+
+        if (cfg.isAEAD() || cfg.hmacAlgo.equalsIgnoreCase("NONE")) {
+            return null;
+        }
+
         if (keyStore.containsAlias(alias)) {
             KeyStore.ProtectionParameter prot = new KeyStore.PasswordProtection(ksPassword.toCharArray());
             KeyStore.SecretKeyEntry entry = (KeyStore.SecretKeyEntry) keyStore.getEntry(alias, prot);
@@ -185,4 +219,30 @@ public class CryptoStuff {
         byte[] tag = mac.doFinal(keyword.trim().toLowerCase().getBytes(StandardCharsets.UTF_8));
         return Base64.getUrlEncoder().withoutPadding().encodeToString(tag);
     }
+
+    public static SecretKey loadOrGenerateKeywordKey(KeyStore keyStore, String alias, String ksPassword)
+            throws Exception {
+        if (keyStore.containsAlias(alias)) {
+            KeyStore.ProtectionParameter prot = new KeyStore.PasswordProtection(ksPassword.toCharArray());
+            KeyStore.SecretKeyEntry entry = (KeyStore.SecretKeyEntry) keyStore.getEntry(alias, prot);
+            return entry.getSecretKey();
+        }
+
+        // Always use HMAC-SHA256 for keyword tokens
+        byte[] keyBytes = new byte[32]; // 256 bits
+        new SecureRandom().nextBytes(keyBytes);
+        SecretKey newKey = new SecretKeySpec(keyBytes, "HmacSHA256");
+
+        KeyStore.SecretKeyEntry skEntry = new KeyStore.SecretKeyEntry(newKey);
+        KeyStore.PasswordProtection prot = new KeyStore.PasswordProtection(ksPassword.toCharArray());
+        keyStore.setEntry(alias, skEntry, prot);
+
+        try (FileOutputStream fos = new FileOutputStream("clientkeystore.jceks")) {
+            keyStore.store(fos, ksPassword.toCharArray());
+        }
+
+        System.out.println("[INFO] New keyword HMAC key generated and stored in keystore.");
+        return newKey;
+    }
+
 }
