@@ -48,10 +48,10 @@ public class cltest {
         SecretKey key = CryptoStuff.loadOrGenerateKey(clKeyStore, "clientKey", keystorePassword, cfg);
 
         // Load or generate HMAC key
-        SecretKey HMacKey = CryptoStuff.loadOrGenerateHMACKey(clKeyStore, "HMACKey", keystorePassword, cfg);
+        SecretKey HMacKey = CryptoStuff.loadOrGenerateHMACKey(clKeyStore, "clientHMACKey", keystorePassword, cfg);
 
         // Load or generate HMAC key to generate tokens
-        SecretKey keywordKey = CryptoStuff.loadOrGenerateKeywordKey(clKeyStore, "KeywordKey", keystorePassword);
+        SecretKey keywordKey = CryptoStuff.loadOrGenerateKeywordKey(clKeyStore, "keywordKey", keystorePassword);
 
         Socket socket = new Socket("localhost", PORT);
         DataInputStream in = new DataInputStream(socket.getInputStream());
@@ -90,7 +90,7 @@ public class cltest {
                         getFile(arg, targetDir, out, in, key, HMacKey, cfg);
                     } else {
                         // Assume keyword mode
-                        getFileByKeyword(arg, targetDir, out, in, key, HMacKey, cfg);
+                        getFileByKeyword(arg, targetDir, out, in, key, HMacKey, keywordKey, cfg);
                     }
                 } else {
                     System.out.println("Usage:");
@@ -109,7 +109,7 @@ public class cltest {
                     System.out.println("Usage: cltest SEARCH <keyword>");
                     return;
                 }
-                searchFiles(args[1], out, in, HMacKey);
+                searchFiles(args[1], out, in, HMacKey, keywordKey);
                 break;
 
             default:
@@ -234,11 +234,11 @@ public class cltest {
 
     private static void getFileByKeyword(String keyword, String targetDir,
             DataOutputStream out, DataInputStream in,
-            Key key, Key HMacKey, CryptoConfig cfg) throws Exception {
+            Key key, Key HMacKey, Key keywordKey, CryptoConfig cfg) throws Exception {
 
         System.out.println("[INFO] Searching for files with keyword: " + keyword);
 
-        String token = CryptoStuff.generateKeywordToken(HMacKey, keyword);
+        String token = CryptoStuff.generateKeywordToken(keywordKey, keyword);
 
         out.writeUTF("SEARCH");
         out.writeUTF(token);
@@ -344,8 +344,8 @@ public class cltest {
     }
 
     private static void searchFiles(String keyword, DataOutputStream out,
-            DataInputStream in, Key HMacKey) throws Exception {
-        String token = CryptoStuff.generateKeywordToken(HMacKey, keyword);
+            DataInputStream in, Key HMacKey, Key keywordKey) throws Exception {
+        String token = CryptoStuff.generateKeywordToken(keywordKey, keyword);
 
         out.writeUTF("SEARCH");
         out.writeUTF(token);

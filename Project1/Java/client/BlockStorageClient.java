@@ -111,7 +111,7 @@ public class BlockStorageClient {
                     case "SEARCH":
                         System.out.print("Enter keyword to search: ");
                         String keyword = scanner.nextLine();
-                        searchFiles(keyword, out, in, HMacKey);
+                        searchFiles(keyword, out, in, keywordKey);
                         break;
 
                     case "EXIT":
