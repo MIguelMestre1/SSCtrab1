@@ -111,7 +111,7 @@ public class BlockStorageClient {
                     case "SEARCH":
                         System.out.print("Enter keyword to search: ");
                         String keyword = scanner.nextLine();
-                        searchFiles(keyword, out, in, keywordKey);
+                        searchFiles(keyword, out, in, HMacKey, keywordKey);
                         break;
 
                     case "EXIT":
@@ -241,10 +241,10 @@ public class BlockStorageClient {
     }
 
     private static void searchFiles(String keyword, DataOutputStream out,
-            DataInputStream in, Key HMacKey) throws Exception {
+            DataInputStream in, Key HMacKey, Key keywordKey) throws Exception {
 
         // generate token for keyword
-        String token = CryptoStuff.generateKeywordToken(HMacKey, keyword);
+        String token = CryptoStuff.generateKeywordToken(keywordKey, keyword);
 
         out.writeUTF("SEARCH");
         out.writeUTF(token);
